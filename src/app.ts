@@ -1,39 +1,32 @@
-import { join } from 'node:path'
-import AutoLoad, { AutoloadPluginOptions } from '@fastify/autoload'
-import { FastifyPluginAsync, FastifyServerOptions } from 'fastify'
+import { FastifyPluginAsync } from 'fastify'
+import fp from 'fastify-plugin'
+import envPlugin from './plugins/env'
+import prismaPlugin from './plugins/db'
+import swaggerPlugin from './plugins/swagger'
+import corsPlugin from './plugins/cors'
+import errorHandlerPlugin from './plugins/error-handler'
 
-export interface AppOptions extends FastifyServerOptions, Partial<AutoloadPluginOptions> {
+const app: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(envPlugin)
+  await fastify.register(errorHandlerPlugin)
+  await fastify.register(corsPlugin)
+  await fastify.register(prismaPlugin)
+  await fastify.register(swaggerPlugin)
 
-}
-// Pass --options via CLI arguments in command to enable these options.
-const options: AppOptions = {
-}
-
-const app: FastifyPluginAsync<AppOptions> = async (
-  fastify,
-  opts
-): Promise<void> => {
-  // Place here your custom code!
-
-  // Do not touch the following lines
-
-  // This loads all plugins defined in plugins
-  // those should be support plugins that are reused
-  // through your application
-  // eslint-disable-next-line no-void
-  void fastify.register(AutoLoad, {
-    dir: join(__dirname, 'plugins'),
-    options: opts
-  })
-
-  // This loads all plugins defined in routes
-  // define your routes in one of these
-  // eslint-disable-next-line no-void
-  void fastify.register(AutoLoad, {
-    dir: join(__dirname, 'routes'),
-    options: opts
-  })
+  fastify.get('/health', async () => ({ status: 'ok' }))
 }
 
-export default app
-export { app, options }
+export default fp(app)
+export const options = {
+  logger: {
+    level: process.env.LOG_LEVEL || 'info',
+    transport: {
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'HH:MM:ss',
+        ignore: 'pid,hostname',
+      },
+    },
+  },
+}
