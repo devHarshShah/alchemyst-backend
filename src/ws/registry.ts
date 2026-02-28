@@ -41,3 +41,15 @@ export function sendEvent(connectionId: string, payload: ServerEvent) {
     connection.socket.send(JSON.stringify(payload))
   }
 }
+
+export function sendEventToSession(sessionId: string, payload: ServerEvent) {
+  for (const connection of connections.values()) {
+    if (connection.sessionId !== sessionId) {
+      continue
+    }
+
+    if (connection.socket.readyState === WebSocket.OPEN) {
+      connection.socket.send(JSON.stringify(payload))
+    }
+  }
+}

@@ -26,16 +26,57 @@ export type JoinedServerEvent = {
   sessionId: string
 }
 
+export type HistoryServerEvent = {
+  type: typeof SERVER_EVENTS.HISTORY
+  sessionId: string
+  messages: Array<{
+    role: 'user' | 'assistant' | 'system'
+    content: string
+    timestamp: string
+    interrupted?: boolean
+  }>
+}
+
+export type SessionStartedServerEvent = {
+  type: typeof SERVER_EVENTS.SESSION_STARTED
+  sessionId: string
+}
+
 export type MessageReceivedServerEvent = {
   type: typeof SERVER_EVENTS.MESSAGE_RECEIVED
   sessionId: string
   text: string
 }
 
+export type AssistantStreamStartServerEvent = {
+  type: typeof SERVER_EVENTS.ASSISTANT_STREAM_START
+  sessionId: string
+}
+
+export type AssistantStreamChunkServerEvent = {
+  type: typeof SERVER_EVENTS.ASSISTANT_STREAM_CHUNK
+  sessionId: string
+  chunk: string
+}
+
+export type AssistantStreamEndServerEvent = {
+  type: typeof SERVER_EVENTS.ASSISTANT_STREAM_END
+  sessionId: string
+  text: string
+}
+
+export type AssistantInterruptedServerEvent = {
+  type: typeof SERVER_EVENTS.ASSISTANT_INTERRUPTED
+  sessionId: string
+  partialText: string
+}
+
 export type AssistantMessageServerEvent = {
   type: typeof SERVER_EVENTS.ASSISTANT_MESSAGE
   sessionId: string
   text: string
+  timestamp?: string
+  interrupted?: boolean
 }
 
 export type PongServerEvent = {
@@ -52,7 +93,13 @@ export type ErrorServerEvent = {
 export type ServerEvent =
   | ConnectedServerEvent
   | JoinedServerEvent
+  | HistoryServerEvent
+  | SessionStartedServerEvent
   | MessageReceivedServerEvent
+  | AssistantStreamStartServerEvent
+  | AssistantStreamChunkServerEvent
+  | AssistantStreamEndServerEvent
+  | AssistantInterruptedServerEvent
   | AssistantMessageServerEvent
   | PongServerEvent
   | ErrorServerEvent
