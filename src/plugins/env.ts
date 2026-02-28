@@ -6,6 +6,8 @@ export type AppConfig = {
   NODE_ENV: string
   PORT: number
   DATABASE_URL: string
+  REDIS_URL: string
+  JWT_SECRET: string
   CORS_ORIGIN: string
   SWAGGER_ENABLED: boolean
 }
@@ -62,6 +64,14 @@ export default fp(async (fastify) => {
     throw new Error('Missing DATABASE_URL in .env or environment')
   }
 
+  if (!process.env.REDIS_URL) {
+    throw new Error('Missing REDIS_URL in .env or environment')
+  }
+
+  if (!process.env.JWT_SECRET) {
+    throw new Error('Missing JWT_SECRET in .env or environment')
+  }
+
   const port = Number(process.env.PORT ?? '3000')
 
   if (Number.isNaN(port)) {
@@ -72,6 +82,8 @@ export default fp(async (fastify) => {
     NODE_ENV: process.env.NODE_ENV ?? 'development',
     PORT: port,
     DATABASE_URL: process.env.DATABASE_URL,
+    REDIS_URL: process.env.REDIS_URL,
+    JWT_SECRET: process.env.JWT_SECRET,
     CORS_ORIGIN: process.env.CORS_ORIGIN ?? '*',
     SWAGGER_ENABLED: boolFromEnv(process.env.SWAGGER_ENABLED, true),
   })
