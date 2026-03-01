@@ -9,6 +9,7 @@ export const SERVER_EVENTS = {
   JOINED: 'joined',
   HISTORY: 'history',
   SESSION_STARTED: 'session_started',
+  SESSION_ENDED: 'session_ended',
   MESSAGE_RECEIVED: 'message_received',
   ASSISTANT_STREAM_START: 'assistant_stream_start',
   ASSISTANT_STREAM_CHUNK: 'assistant_stream_chunk',

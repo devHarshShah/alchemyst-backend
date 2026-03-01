@@ -2,6 +2,52 @@ import { GoogleGenAI } from '@google/genai'
 import { httpError } from '../plugins/error-handler'
 import { StoredMessage } from '../ws/handlers/message.handler'
 
+function formatGeminiError(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  if (typeof error === 'object' && error !== null) {
+    const maybe = error as {
+      message?: unknown
+      code?: unknown
+      status?: unknown
+      error?: { message?: unknown; code?: unknown; status?: unknown }
+    }
+
+    const nestedMessage =
+      typeof maybe.error?.message === 'string'
+        ? maybe.error.message
+        : typeof maybe.message === 'string'
+          ? maybe.message
+          : null
+
+    const code =
+      typeof maybe.error?.code === 'number'
+        ? maybe.error.code
+        : typeof maybe.code === 'number'
+          ? maybe.code
+          : null
+
+    const status =
+      typeof maybe.error?.status === 'string'
+        ? maybe.error.status
+        : typeof maybe.status === 'string'
+          ? maybe.status
+          : null
+
+    const parts = [nestedMessage, code ? `code=${code}` : null, status ? `status=${status}` : null]
+      .filter(Boolean)
+      .join(' | ')
+
+    if (parts) {
+      return parts
+    }
+  }
+
+  return 'Unknown Gemini error'
+}
+
 export class GeminiAiStreamService {
   private readonly client?: GoogleGenAI
   private readonly model: string
@@ -59,8 +105,8 @@ export class GeminiAiStreamService {
           yield text
         }
       }
-    } catch (_error) {
-      throw httpError(502, 'Gemini streaming request failed')
+    } catch (error) {
+      throw httpError(502, `Gemini streaming request failed: ${formatGeminiError(error)}`)
     }
   }
 
@@ -81,8 +127,8 @@ export class GeminiAiStreamService {
       }
 
       return text
-    } catch (_error) {
-      throw httpError(502, 'Gemini request failed while creating greeting')
+    } catch (error) {
+      throw httpError(502, `Gemini greeting request failed: ${formatGeminiError(error)}`)
     }
   }
 
@@ -119,8 +165,47 @@ export class GeminiAiStreamService {
       }
 
       return text
-    } catch (_error) {
-      throw httpError(502, 'Gemini request failed while creating idle prompt')
+    } catch (error) {
+      throw httpError(502, `Gemini idle prompt failed: ${formatGeminiError(error)}`)
+    }
+  }
+
+  async generateSessionEndMessage(history: StoredMessage[]): Promise<string> {
+    this.ensureClient()
+
+    const recent = history.slice(-10)
+    const transcript = recent
+      .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+      .join('\n')
+
+    const prompt = [
+      'You are an AI assistant in a live chat.',
+      'The user has been inactive despite repeated follow-ups.',
+      'Generate one short polite final message saying the session is being ended due to inactivity.',
+      'Ask them to start a new session when they return.',
+      'Do not include markdown, labels, or explanation.',
+      '',
+      'Recent conversation:',
+      transcript || '(no prior messages)',
+      '',
+      'Final assistant message:',
+    ].join('\n')
+
+    try {
+      const response = await this.client!.models.generateContent({
+        model: this.model,
+        contents: prompt,
+      })
+
+      const text = (response.text ?? '').trim()
+
+      if (!text) {
+        return 'Ending this chat due to inactivity. Start a new session when you are back.'
+      }
+
+      return text
+    } catch (error) {
+      throw httpError(502, `Gemini session-end prompt failed: ${formatGeminiError(error)}`)
     }
   }
 }

@@ -22,6 +22,67 @@ import {
 } from './handlers/message.handler'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+type SessionStreamControl = {
+  activeStreamId: number
+  activeCompletion?: Promise<void>
+  resolveActive?: () => void
+}
+
+const sessionStreamControls = new Map<string, SessionStreamControl>()
+
+function getStreamControl(sessionId: string): SessionStreamControl {
+  const existing = sessionStreamControls.get(sessionId)
+
+  if (existing) {
+    return existing
+  }
+
+  const created: SessionStreamControl = { activeStreamId: 0 }
+  sessionStreamControls.set(sessionId, created)
+  return created
+}
+
+async function interruptActiveStream(sessionId: string) {
+  const control = getStreamControl(sessionId)
+
+  if (!control.activeCompletion) {
+    return
+  }
+
+  // Invalidate the current stream id so the running loop exits as interrupted.
+  control.activeStreamId += 1
+
+  await Promise.race([control.activeCompletion, sleep(1000)])
+}
+
+function beginStream(sessionId: string): { streamId: number; finish: () => void } {
+  const control = getStreamControl(sessionId)
+
+  control.activeStreamId += 1
+  const streamId = control.activeStreamId
+
+  let finished = false
+  control.activeCompletion = new Promise<void>((resolve) => {
+    control.resolveActive = resolve
+  })
+
+  const finish = () => {
+    if (finished) {
+      return
+    }
+
+    finished = true
+    control.resolveActive?.()
+
+    if (control.activeStreamId === streamId) {
+      control.activeCompletion = undefined
+      control.resolveActive = undefined
+    }
+  }
+
+  return { streamId, finish }
+}
+
 function rawDataToString(rawData: RawData): string {
   if (typeof rawData === 'string') {
     return rawData
@@ -135,7 +196,6 @@ export function handleChatConnection(
 ) {
   const connectionId = createSessionId(authUser.userId)
   const defaultSessionId = connectionId
-  let activeStreamId = 0
 
   addConnection(connectionId, socket)
   setConnectionSession(connectionId, defaultSessionId)
@@ -150,11 +210,11 @@ export function handleChatConnection(
     sessionId: defaultSessionId,
   })
 
-  void idleService.markActivity(defaultSessionId)
-
   const idleCheckInterval = setInterval(() => {
     const sessionId = getConnectionSession(connectionId) || defaultSessionId
-    void idleService.checkAndSendPrompt(sessionId)
+    void idleService.checkAndSendPrompt(sessionId).catch((error: unknown) => {
+      fastify.log.error({ err: error, sessionId }, 'Idle check failed')
+    })
   }, 10000)
 
   socket.on('message', async (rawData: RawData) => {
@@ -165,7 +225,6 @@ export function handleChatConnection(
         const sessionId = event.sessionId?.trim() || defaultSessionId
         assertSessionOwnership(authUser.userId, sessionId)
         setConnectionSession(connectionId, sessionId)
-        await idleService.markActivity(sessionId)
 
         sendEvent(connectionId, {
           type: SERVER_EVENTS.JOINED,
@@ -173,13 +232,18 @@ export function handleChatConnection(
         })
 
         await sendSessionHistory(fastify, gemini, connectionId, sessionId)
+
+        if (await idleService.isSessionEnded(sessionId)) {
+          sendEvent(connectionId, {
+            type: SERVER_EVENTS.SESSION_ENDED,
+            sessionId,
+            reason: 'idle_limit_reached',
+          })
+        }
         return
       }
 
       if (event.type === CLIENT_EVENTS.PING) {
-        const sessionId = getConnectionSession(connectionId) || defaultSessionId
-        await idleService.markActivity(sessionId)
-
         sendEvent(connectionId, {
           type: SERVER_EVENTS.PONG,
           ...getPongPayload(),
@@ -189,115 +253,106 @@ export function handleChatConnection(
 
       const sessionId = getConnectionSession(connectionId) || defaultSessionId
       assertSessionOwnership(authUser.userId, sessionId)
-      await idleService.markActivity(sessionId)
-      activeStreamId += 1
-      const streamId = activeStreamId
+      await idleService.assertSessionActive(sessionId)
+      await idleService.markUserActivity(sessionId)
+      await interruptActiveStream(sessionId)
+      const { streamId, finish } = beginStream(sessionId)
 
-      const preHistory = await fetchSessionHistory(fastify, sessionId)
+      try {
+        const preHistory = await fetchSessionHistory(fastify, sessionId)
 
-      if (preHistory.length === 0) {
-        const greeting = await gemini.generateSessionGreeting()
-        const greetingMessage = await saveMessage(fastify, sessionId, 'assistant', greeting)
+        if (preHistory.length === 0) {
+          const greeting = await gemini.generateSessionGreeting()
+          const greetingMessage = await saveMessage(fastify, sessionId, 'assistant', greeting)
+
+          sendEvent(connectionId, {
+            type: SERVER_EVENTS.SESSION_STARTED,
+            sessionId,
+          })
+
+          sendEvent(connectionId, {
+            type: SERVER_EVENTS.ASSISTANT_MESSAGE,
+            sessionId,
+            text: greetingMessage.content,
+            timestamp: greetingMessage.timestamp,
+          })
+        }
+
+        const userMessage = await saveMessage(fastify, sessionId, 'user', event.text)
 
         sendEvent(connectionId, {
-          type: SERVER_EVENTS.SESSION_STARTED,
+          type: SERVER_EVENTS.MESSAGE_RECEIVED,
           sessionId,
+          text: userMessage.content,
+        })
+
+        const historyWithUser = await fetchSessionHistory(fastify, sessionId)
+
+        sendEvent(connectionId, {
+          type: SERVER_EVENTS.ASSISTANT_STREAM_START,
+          sessionId,
+        })
+
+        let assistantText = ''
+        let interrupted = false
+
+        for await (const chunk of gemini.streamReplyFromHistory(historyWithUser)) {
+          if (streamId !== getStreamControl(sessionId).activeStreamId) {
+            interrupted = true
+            break
+          }
+
+          assistantText += chunk
+
+          sendEvent(connectionId, {
+            type: SERVER_EVENTS.ASSISTANT_STREAM_CHUNK,
+            sessionId,
+            chunk,
+          })
+
+          if (fastify.config.CHUNK_DELAY_MS > 0) {
+            await sleep(fastify.config.CHUNK_DELAY_MS)
+          }
+        }
+
+        if (streamId !== getStreamControl(sessionId).activeStreamId) {
+          interrupted = true
+        }
+
+        if (interrupted) {
+          if (assistantText.trim()) {
+            const interruptedContent = `${assistantText.trim()} [Interrupted]`
+            await saveMessage(fastify, sessionId, 'assistant', interruptedContent, {
+              interrupted: true,
+            })
+          }
+
+          sendEvent(connectionId, {
+            type: SERVER_EVENTS.ASSISTANT_INTERRUPTED,
+            sessionId,
+            partialText: assistantText,
+          })
+
+          return
+        }
+
+        const assistantMessage = await saveMessage(fastify, sessionId, 'assistant', assistantText)
+
+        sendEvent(connectionId, {
+          type: SERVER_EVENTS.ASSISTANT_STREAM_END,
+          sessionId,
+          text: assistantMessage.content,
         })
 
         sendEvent(connectionId, {
           type: SERVER_EVENTS.ASSISTANT_MESSAGE,
           sessionId,
-          text: greetingMessage.content,
-          timestamp: greetingMessage.timestamp,
+          text: assistantMessage.content,
+          timestamp: assistantMessage.timestamp,
         })
+      } finally {
+        finish()
       }
-
-      const userMessage = await saveMessage(fastify, sessionId, 'user', event.text)
-
-      sendEvent(connectionId, {
-        type: SERVER_EVENTS.MESSAGE_RECEIVED,
-        sessionId,
-        text: userMessage.content,
-      })
-
-      const historyWithUser = await fetchSessionHistory(fastify, sessionId)
-
-      sendEvent(connectionId, {
-        type: SERVER_EVENTS.ASSISTANT_STREAM_START,
-        sessionId,
-      })
-
-      let assistantText = ''
-      let interrupted = false
-
-      for await (const chunk of gemini.streamReplyFromHistory(historyWithUser)) {
-        if (streamId !== activeStreamId) {
-          interrupted = true
-          break
-        }
-
-        assistantText += chunk
-
-        sendEvent(connectionId, {
-          type: SERVER_EVENTS.ASSISTANT_STREAM_CHUNK,
-          sessionId,
-          chunk,
-        })
-
-        if (fastify.config.CHUNK_DELAY_MS > 0) {
-          await sleep(fastify.config.CHUNK_DELAY_MS)
-        }
-      }
-
-      if (streamId !== activeStreamId) {
-        interrupted = true
-      }
-
-      if (interrupted) {
-        if (assistantText.trim()) {
-          const interruptedContent = `${assistantText.trim()} [Interrupted]`
-          const interruptedMessage = await saveMessage(
-            fastify,
-            sessionId,
-            'assistant',
-            interruptedContent,
-            {
-              interrupted: true,
-            }
-          )
-
-          sendEvent(connectionId, {
-            type: SERVER_EVENTS.ASSISTANT_MESSAGE,
-            sessionId,
-            text: interruptedMessage.content,
-            timestamp: interruptedMessage.timestamp,
-            interrupted: true,
-          })
-        }
-
-        sendEvent(connectionId, {
-          type: SERVER_EVENTS.ASSISTANT_INTERRUPTED,
-          sessionId,
-          partialText: assistantText,
-        })
-
-        return
-      }
-
-      const assistantMessage = await saveMessage(fastify, sessionId, 'assistant', assistantText)
-
-      sendEvent(connectionId, {
-        type: SERVER_EVENTS.ASSISTANT_STREAM_END,
-        sessionId,
-        text: assistantMessage.content,
-      })
-
-      sendEvent(connectionId, {
-        type: SERVER_EVENTS.ASSISTANT_MESSAGE,
-        sessionId,
-        text: assistantMessage.content,
-        timestamp: assistantMessage.timestamp,
-      })
     } catch (error) {
       sendWsError(connectionId, error)
     }

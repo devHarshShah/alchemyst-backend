@@ -30,12 +30,16 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
     const sessionId = requestedSessionId || createSessionId(authUser.userId)
 
     assertSessionOwnership(authUser.userId, sessionId)
-    await idleService.markActivity(sessionId)
+    const isEnded = await idleService.isSessionEnded(sessionId)
+
+    if (!isEnded) {
+      await idleService.markUserActivity(sessionId)
+    }
 
     const history = await fetchSessionHistory(fastify, sessionId)
     let firstAssistantMessage = history.find((message) => message.role === 'assistant')
 
-    if (!firstAssistantMessage) {
+    if (!firstAssistantMessage && !isEnded) {
       const greeting = await gemini.generateSessionGreeting()
       firstAssistantMessage = await saveMessage(fastify, sessionId, 'assistant', greeting)
 
@@ -52,12 +56,13 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
       })
     }
 
-    return reply.status(201).send({
-      statusCode: 201,
-      message: 'Session started',
+    return reply.status(isEnded ? 200 : 201).send({
+      statusCode: isEnded ? 200 : 201,
+      message: isEnded ? 'Session loaded (ended)' : 'Session started',
       data: {
         sessionId,
         firstMessage: firstAssistantMessage,
+        sessionEnded: isEnded,
       },
     })
   })

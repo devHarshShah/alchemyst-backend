@@ -42,6 +42,12 @@ export type SessionStartedServerEvent = {
   sessionId: string
 }
 
+export type SessionEndedServerEvent = {
+  type: typeof SERVER_EVENTS.SESSION_ENDED
+  sessionId: string
+  reason: string
+}
+
 export type MessageReceivedServerEvent = {
   type: typeof SERVER_EVENTS.MESSAGE_RECEIVED
   sessionId: string
@@ -95,6 +101,7 @@ export type ServerEvent =
   | JoinedServerEvent
   | HistoryServerEvent
   | SessionStartedServerEvent
+  | SessionEndedServerEvent
   | MessageReceivedServerEvent
   | AssistantStreamStartServerEvent
   | AssistantStreamChunkServerEvent
