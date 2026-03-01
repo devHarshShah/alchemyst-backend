@@ -1,5 +1,8 @@
 import { FastifyInstance } from 'fastify'
-import { GeminiAiStreamService } from './ai-stream.service'
+import {
+  GeminiAiStreamService,
+} from './ai-stream.service'
+import { DEFAULT_IDLE_FOLLOWUP_MESSAGE, DEFAULT_SESSION_END_MESSAGE } from './ai-prompts'
 import { SERVER_EVENTS } from '../ws/events'
 import { fetchSessionHistory, saveMessage } from '../ws/handlers/message.handler'
 import { sendEventToSession } from '../ws/registry'
@@ -99,11 +102,20 @@ export class IdleService {
       promptText = await this.gemini.generateIdlePrompt(history)
     } catch (error) {
       const err = error as { details?: unknown; code?: unknown }
+      const aiFailure = httpError(
+        502,
+        'AI failed to generate an idle follow-up. Sent a fallback message instead.'
+      )
       this.fastify.log.error(
         { err: error, providerError: err.details, errorCode: err.code, sessionId },
         'Idle prompt generation failed'
       )
-      return
+      sendEventToSession(sessionId, {
+        type: SERVER_EVENTS.ERROR,
+        statusCode: aiFailure.statusCode,
+        reason: aiFailure.message,
+      })
+      promptText = DEFAULT_IDLE_FOLLOWUP_MESSAGE
     }
 
     const promptMessage = await saveMessage(this.fastify, sessionId, 'assistant', promptText)
@@ -120,16 +132,25 @@ export class IdleService {
     if (count >= this.maxIdlePrompts) {
       await this.fastify.redis.set(endedKey(sessionId), '1')
 
-      let endText = 'Ending this chat due to inactivity. Start a new session when you are back.'
+      let endText = DEFAULT_SESSION_END_MESSAGE
       try {
         const updatedHistory = await fetchSessionHistory(this.fastify, sessionId)
         endText = await this.gemini.generateSessionEndMessage(updatedHistory)
       } catch (error) {
         const err = error as { details?: unknown; code?: unknown }
+        const aiFailure = httpError(
+          502,
+          'AI failed to generate a session-end message. Sent a fallback message instead.'
+        )
         this.fastify.log.error(
           { err: error, providerError: err.details, errorCode: err.code, sessionId },
           'Session end message generation failed'
         )
+        sendEventToSession(sessionId, {
+          type: SERVER_EVENTS.ERROR,
+          statusCode: aiFailure.statusCode,
+          reason: aiFailure.message,
+        })
       }
 
       const endedMessage = await saveMessage(

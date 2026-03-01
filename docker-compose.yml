@@ -35,7 +35,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: ai_chat
     ports:
-      - "5432:5432"
+      - "5450:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:

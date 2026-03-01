@@ -13,6 +13,7 @@ import { getPongPayload } from './handlers/ping.handler'
 import { HttpError, httpError } from '../plugins/error-handler'
 import { AuthPayload } from '../modules/auth/auth.guard'
 import { GeminiAiStreamService } from '../services/ai-stream.service'
+import { DEFAULT_GREETING_MESSAGE } from '../services/ai-prompts'
 import { IdleService } from '../services/idle.service'
 import {
   assertSessionOwnership,
@@ -162,7 +163,22 @@ async function sendSessionHistory(
   let history = await fetchSessionHistory(fastify, sessionId)
 
   if (history.length === 0) {
-    const greeting = await gemini.generateSessionGreeting()
+    let greeting = DEFAULT_GREETING_MESSAGE
+    try {
+      greeting = await gemini.generateSessionGreeting()
+    } catch (error) {
+      const aiFailure = httpError(
+        502,
+        'AI failed to generate the opening message. Sent a fallback greeting instead.'
+      )
+      fastify.log.error({ err: error, sessionId }, 'Opening greeting generation failed')
+      sendEvent(connectionId, {
+        type: SERVER_EVENTS.ERROR,
+        statusCode: aiFailure.statusCode,
+        reason: aiFailure.message,
+      })
+    }
+
     const assistantMessage = await saveMessage(fastify, sessionId, 'assistant', greeting)
 
     sendEvent(connectionId, {
@@ -265,7 +281,22 @@ export function handleChatConnection(
         const preHistory = await fetchSessionHistory(fastify, sessionId)
 
         if (preHistory.length === 0) {
-          const greeting = await gemini.generateSessionGreeting()
+          let greeting = DEFAULT_GREETING_MESSAGE
+          try {
+            greeting = await gemini.generateSessionGreeting()
+          } catch (error) {
+            const aiFailure = httpError(
+              502,
+              'AI failed to generate the opening message. Sent a fallback greeting instead.'
+            )
+            fastify.log.error({ err: error, sessionId }, 'Opening greeting generation failed')
+            sendEvent(connectionId, {
+              type: SERVER_EVENTS.ERROR,
+              statusCode: aiFailure.statusCode,
+              reason: aiFailure.message,
+            })
+          }
+
           const greetingMessage = await saveMessage(fastify, sessionId, 'assistant', greeting)
 
           sendEvent(connectionId, {

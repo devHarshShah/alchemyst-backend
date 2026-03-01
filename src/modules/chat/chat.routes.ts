@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import { getAuthUser } from '../auth/auth.guard'
 import { HttpError, httpError } from '../../plugins/error-handler'
 import { GeminiAiStreamService } from '../../services/ai-stream.service'
+import { DEFAULT_GREETING_MESSAGE } from '../../services/ai-prompts'
 import { IdleService } from '../../services/idle.service'
 import { handleChatConnection } from '../../ws/gateway'
 import { SERVER_EVENTS } from '../../ws/events'
@@ -43,7 +44,22 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
     let firstAssistantMessage = history.find((message) => message.role === 'assistant')
 
     if (!firstAssistantMessage && !isEnded) {
-      const greeting = await gemini.generateSessionGreeting()
+      let greeting = DEFAULT_GREETING_MESSAGE
+      try {
+        greeting = await gemini.generateSessionGreeting()
+      } catch (error) {
+        const aiFailure = httpError(
+          502,
+          'AI failed to generate the opening message. Sent a fallback greeting instead.'
+        )
+        fastify.log.error({ err: error, sessionId }, 'Opening greeting generation failed')
+        sendEventToSession(sessionId, {
+          type: SERVER_EVENTS.ERROR,
+          statusCode: aiFailure.statusCode,
+          reason: aiFailure.message,
+        })
+      }
+
       firstAssistantMessage = await saveMessage(fastify, sessionId, 'assistant', greeting)
       await idleService.markAssistantActivity(sessionId)
 

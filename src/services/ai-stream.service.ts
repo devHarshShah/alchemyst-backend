@@ -1,6 +1,15 @@
 import { GoogleGenAI } from '@google/genai'
 import { httpError } from '../plugins/error-handler'
 import { StoredMessage } from '../ws/handlers/message.handler'
+import {
+  buildChatPrompt,
+  buildIdlePrompt,
+  buildSessionEndPrompt,
+  DEFAULT_GREETING_MESSAGE,
+  DEFAULT_IDLE_FOLLOWUP_MESSAGE,
+  DEFAULT_SESSION_END_MESSAGE,
+  GREETING_PROMPT,
+} from './ai-prompts'
 
 function extractGeminiErrorDetails(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
@@ -69,23 +78,6 @@ export class GeminiAiStreamService {
     }
   }
 
-  private buildChatPrompt(history: StoredMessage[]): string {
-    const transcript = history
-      .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
-      .join('\n')
-
-    return [
-      'You are an AI assistant in a real-time conversation.',
-      'Respond naturally and keep the answer concise unless asked for detail.',
-      'Use the prior chat history to stay contextual.',
-      '',
-      'Conversation history:',
-      transcript,
-      '',
-      'ASSISTANT:',
-    ].join('\n')
-  }
-
   async *streamReplyFromHistory(history: StoredMessage[]): AsyncGenerator<string> {
     this.ensureClient()
 
@@ -93,7 +85,7 @@ export class GeminiAiStreamService {
       throw httpError(400, 'history is required')
     }
 
-    const prompt = this.buildChatPrompt(history)
+    const prompt = buildChatPrompt(history)
 
     try {
       const stream = await this.client!.models.generateContentStream({
@@ -122,14 +114,13 @@ export class GeminiAiStreamService {
     try {
       const response = await this.client!.models.generateContent({
         model: this.model,
-        contents:
-          'Start the conversation with one friendly short greeting for a voice-agent style chat.',
+        contents: GREETING_PROMPT,
       })
 
       const text = (response.text ?? '').trim()
 
       if (!text) {
-        return 'Hey there, how can I help you today?'
+        return DEFAULT_GREETING_MESSAGE
       }
 
       return text
@@ -144,22 +135,7 @@ export class GeminiAiStreamService {
   async generateIdlePrompt(history: StoredMessage[]): Promise<string> {
     this.ensureClient()
 
-    const recent = history.slice(-8)
-    const transcript = recent
-      .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
-      .join('\n')
-
-    const prompt = [
-      'You are an AI assistant in a live chat.',
-      'The user has gone silent for about a minute.',
-      'Generate one short natural follow-up to check if they are still there.',
-      'Do not include markdown, labels, or explanation.',
-      '',
-      'Recent conversation:',
-      transcript || '(no prior messages)',
-      '',
-      'Assistant follow-up:',
-    ].join('\n')
+    const prompt = buildIdlePrompt(history)
 
     try {
       const response = await this.client!.models.generateContent({
@@ -170,7 +146,7 @@ export class GeminiAiStreamService {
       const text = (response.text ?? '').trim()
 
       if (!text) {
-        return 'Hey, are you still there?'
+        return DEFAULT_IDLE_FOLLOWUP_MESSAGE
       }
 
       return text
@@ -185,23 +161,7 @@ export class GeminiAiStreamService {
   async generateSessionEndMessage(history: StoredMessage[]): Promise<string> {
     this.ensureClient()
 
-    const recent = history.slice(-10)
-    const transcript = recent
-      .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
-      .join('\n')
-
-    const prompt = [
-      'You are an AI assistant in a live chat.',
-      'The user has been inactive despite repeated follow-ups.',
-      'Generate one short polite final message saying the session is being ended due to inactivity.',
-      'Ask them to start a new session when they return.',
-      'Do not include markdown, labels, or explanation.',
-      '',
-      'Recent conversation:',
-      transcript || '(no prior messages)',
-      '',
-      'Final assistant message:',
-    ].join('\n')
+    const prompt = buildSessionEndPrompt(history)
 
     try {
       const response = await this.client!.models.generateContent({
@@ -212,7 +172,7 @@ export class GeminiAiStreamService {
       const text = (response.text ?? '').trim()
 
       if (!text) {
-        return 'Ending this chat due to inactivity. Start a new session when you are back.'
+        return DEFAULT_SESSION_END_MESSAGE
       }
 
       return text
