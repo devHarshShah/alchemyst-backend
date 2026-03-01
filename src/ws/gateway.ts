@@ -155,6 +155,7 @@ function sendWsError(connectionId: string, error: unknown) {
 async function sendSessionHistory(
   fastify: FastifyInstance,
   gemini: GeminiAiStreamService,
+  idleService: IdleService,
   connectionId: string,
   sessionId: string
 ) {
@@ -175,6 +176,8 @@ async function sendSessionHistory(
       text: assistantMessage.content,
       timestamp: assistantMessage.timestamp,
     })
+
+    await idleService.markAssistantActivity(sessionId)
 
     history = [assistantMessage]
   }
@@ -231,7 +234,7 @@ export function handleChatConnection(
           sessionId,
         })
 
-        await sendSessionHistory(fastify, gemini, connectionId, sessionId)
+        await sendSessionHistory(fastify, gemini, idleService, connectionId, sessionId)
 
         if (await idleService.isSessionEnded(sessionId)) {
           sendEvent(connectionId, {
@@ -276,6 +279,8 @@ export function handleChatConnection(
             text: greetingMessage.content,
             timestamp: greetingMessage.timestamp,
           })
+
+          await idleService.markAssistantActivity(sessionId)
         }
 
         const userMessage = await saveMessage(fastify, sessionId, 'user', event.text)
@@ -333,6 +338,10 @@ export function handleChatConnection(
             partialText: assistantText,
           })
 
+          if (assistantText.trim()) {
+            await idleService.markAssistantActivity(sessionId)
+          }
+
           return
         }
 
@@ -350,6 +359,8 @@ export function handleChatConnection(
           text: assistantMessage.content,
           timestamp: assistantMessage.timestamp,
         })
+
+        await idleService.markAssistantActivity(sessionId)
       } finally {
         finish()
       }

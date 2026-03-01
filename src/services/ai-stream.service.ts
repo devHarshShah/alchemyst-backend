@@ -2,9 +2,13 @@ import { GoogleGenAI } from '@google/genai'
 import { httpError } from '../plugins/error-handler'
 import { StoredMessage } from '../ws/handlers/message.handler'
 
-function formatGeminiError(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message
+function extractGeminiErrorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      provider: 'gemini',
+      message: error.message,
+      name: error.name,
+    }
   }
 
   if (typeof error === 'object' && error !== null) {
@@ -15,37 +19,36 @@ function formatGeminiError(error: unknown): string {
       error?: { message?: unknown; code?: unknown; status?: unknown }
     }
 
-    const nestedMessage =
-      typeof maybe.error?.message === 'string'
-        ? maybe.error.message
-        : typeof maybe.message === 'string'
-          ? maybe.message
-          : null
-
-    const code =
-      typeof maybe.error?.code === 'number'
-        ? maybe.error.code
-        : typeof maybe.code === 'number'
-          ? maybe.code
-          : null
-
-    const status =
-      typeof maybe.error?.status === 'string'
-        ? maybe.error.status
-        : typeof maybe.status === 'string'
-          ? maybe.status
-          : null
-
-    const parts = [nestedMessage, code ? `code=${code}` : null, status ? `status=${status}` : null]
-      .filter(Boolean)
-      .join(' | ')
-
-    if (parts) {
-      return parts
+    return {
+      provider: 'gemini',
+      message: maybe.error?.message ?? maybe.message,
+      code: maybe.error?.code ?? maybe.code,
+      status: maybe.error?.status ?? maybe.status,
     }
   }
 
-  return 'Unknown Gemini error'
+  return {
+    provider: 'gemini',
+    message: String(error),
+  }
+}
+
+function friendlyGeminiError(action: string, error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+
+  if (message.includes('api key')) {
+    return 'AI service configuration is invalid right now. Please try again later.'
+  }
+
+  if (message.includes('quota') || message.includes('rate') || message.includes('resource_exhausted')) {
+    return 'You have exceeded your AI usage quota. Please try again later.'
+  }
+
+  if (message.includes('timeout') || message.includes('timed out')) {
+    return 'AI service timed out. Please try again.'
+  }
+
+  return `${action} right now. Please try again.`
 }
 
 export class GeminiAiStreamService {
@@ -106,7 +109,10 @@ export class GeminiAiStreamService {
         }
       }
     } catch (error) {
-      throw httpError(502, `Gemini streaming request failed: ${formatGeminiError(error)}`)
+      throw httpError(502, friendlyGeminiError('AI could not generate a response', error), {
+        code: 'AI_PROVIDER_ERROR',
+        details: extractGeminiErrorDetails(error),
+      })
     }
   }
 
@@ -128,7 +134,10 @@ export class GeminiAiStreamService {
 
       return text
     } catch (error) {
-      throw httpError(502, `Gemini greeting request failed: ${formatGeminiError(error)}`)
+      throw httpError(502, friendlyGeminiError('AI could not generate the greeting', error), {
+        code: 'AI_PROVIDER_ERROR',
+        details: extractGeminiErrorDetails(error),
+      })
     }
   }
 
@@ -166,7 +175,10 @@ export class GeminiAiStreamService {
 
       return text
     } catch (error) {
-      throw httpError(502, `Gemini idle prompt failed: ${formatGeminiError(error)}`)
+      throw httpError(502, friendlyGeminiError('AI could not generate the idle follow-up', error), {
+        code: 'AI_PROVIDER_ERROR',
+        details: extractGeminiErrorDetails(error),
+      })
     }
   }
 
@@ -205,7 +217,10 @@ export class GeminiAiStreamService {
 
       return text
     } catch (error) {
-      throw httpError(502, `Gemini session-end prompt failed: ${formatGeminiError(error)}`)
+      throw httpError(502, friendlyGeminiError('AI could not generate the session end message', error), {
+        code: 'AI_PROVIDER_ERROR',
+        details: extractGeminiErrorDetails(error),
+      })
     }
   }
 }

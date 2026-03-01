@@ -42,6 +42,7 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
     if (!firstAssistantMessage && !isEnded) {
       const greeting = await gemini.generateSessionGreeting()
       firstAssistantMessage = await saveMessage(fastify, sessionId, 'assistant', greeting)
+      await idleService.markAssistantActivity(sessionId)
 
       sendEventToSession(sessionId, {
         type: SERVER_EVENTS.SESSION_STARTED,

@@ -77,7 +77,7 @@ export default fp(async (fastify) => {
   }
 
   const port = Number(process.env.PORT ?? '3000')
-  const idleSeconds = Number(process.env.IDLE_SECONDS ?? '30')
+  const idleSeconds = Number(process.env.IDLE_SECONDS ?? '10')
   const chunkDelayMs = Number(process.env.CHUNK_DELAY_MS ?? '35')
 
   if (Number.isNaN(port) || port <= 0) {

@@ -35,6 +35,20 @@ export class IdleService {
     await this.fastify.redis.del(promptCountKey(sessionId))
   }
 
+  async markAssistantActivity(sessionId: string) {
+    if (!sessionId.trim()) {
+      return
+    }
+
+    const ended = await this.fastify.redis.get(endedKey(sessionId))
+
+    if (ended) {
+      return
+    }
+
+    await this.fastify.redis.set(lastActivityKey(sessionId), Date.now().toString())
+  }
+
   async isSessionEnded(sessionId: string): Promise<boolean> {
     if (!sessionId.trim()) {
       return false
@@ -84,7 +98,11 @@ export class IdleService {
     try {
       promptText = await this.gemini.generateIdlePrompt(history)
     } catch (error) {
-      this.fastify.log.error({ err: error, sessionId }, 'Idle prompt generation failed')
+      const err = error as { details?: unknown; code?: unknown }
+      this.fastify.log.error(
+        { err: error, providerError: err.details, errorCode: err.code, sessionId },
+        'Idle prompt generation failed'
+      )
       return
     }
 
@@ -97,7 +115,7 @@ export class IdleService {
       timestamp: promptMessage.timestamp,
     })
 
-    await this.fastify.redis.set(lastActivityKey(sessionId), Date.now().toString())
+    await this.markAssistantActivity(sessionId)
 
     if (count >= this.maxIdlePrompts) {
       await this.fastify.redis.set(endedKey(sessionId), '1')
@@ -107,7 +125,11 @@ export class IdleService {
         const updatedHistory = await fetchSessionHistory(this.fastify, sessionId)
         endText = await this.gemini.generateSessionEndMessage(updatedHistory)
       } catch (error) {
-        this.fastify.log.error({ err: error, sessionId }, 'Session end message generation failed')
+        const err = error as { details?: unknown; code?: unknown }
+        this.fastify.log.error(
+          { err: error, providerError: err.details, errorCode: err.code, sessionId },
+          'Session end message generation failed'
+        )
       }
 
       const endedMessage = await saveMessage(
@@ -116,6 +138,7 @@ export class IdleService {
         'assistant',
         endText
       )
+      await this.markAssistantActivity(sessionId)
 
       sendEventToSession(sessionId, {
         type: SERVER_EVENTS.ASSISTANT_MESSAGE,

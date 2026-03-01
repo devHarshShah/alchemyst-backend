@@ -2,16 +2,23 @@ import fp from 'fastify-plugin'
 
 export class HttpError extends Error {
   statusCode: number
+  code?: string
+  details?: unknown
 
-  constructor(statusCode: number, message: string) {
+  constructor(statusCode: number, message: string, options?: { code?: string; details?: unknown }) {
     super(message)
     this.name = 'HttpError'
     this.statusCode = statusCode
+    this.code = options?.code
+    this.details = options?.details
   }
 }
 
-export const httpError = (statusCode: number, message: string) =>
-  new HttpError(statusCode, message)
+export const httpError = (
+  statusCode: number,
+  message: string,
+  options?: { code?: string; details?: unknown }
+) => new HttpError(statusCode, message, options)
 
 export default fp(async (fastify) => {
   fastify.setErrorHandler((error, _request, reply) => {
