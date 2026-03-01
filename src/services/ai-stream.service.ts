@@ -60,6 +60,27 @@ function friendlyGeminiError(action: string, error: unknown): string {
   return `${action} right now. Please try again.`
 }
 
+function sanitizeSingleLineUtterance(text: string): string {
+  const normalized = text.replace(/\r/g, '').trim()
+
+  if (!normalized) {
+    return ''
+  }
+
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const firstLine = (lines[0] ?? '')
+    .replace(/^[-*]\s+/, '')
+    .replace(/^\d+[.)]\s+/, '')
+    .replace(/^["']|["']$/g, '')
+    .trim()
+
+  return firstLine
+}
+
 export class GeminiAiStreamService {
   private readonly client?: GoogleGenAI
   private readonly model: string
@@ -117,7 +138,7 @@ export class GeminiAiStreamService {
         contents: GREETING_PROMPT,
       })
 
-      const text = (response.text ?? '').trim()
+      const text = sanitizeSingleLineUtterance(response.text ?? '')
 
       if (!text) {
         return DEFAULT_GREETING_MESSAGE
@@ -143,7 +164,7 @@ export class GeminiAiStreamService {
         contents: prompt,
       })
 
-      const text = (response.text ?? '').trim()
+      const text = sanitizeSingleLineUtterance(response.text ?? '')
 
       if (!text) {
         return DEFAULT_IDLE_FOLLOWUP_MESSAGE
@@ -169,7 +190,7 @@ export class GeminiAiStreamService {
         contents: prompt,
       })
 
-      const text = (response.text ?? '').trim()
+      const text = sanitizeSingleLineUtterance(response.text ?? '')
 
       if (!text) {
         return DEFAULT_SESSION_END_MESSAGE
