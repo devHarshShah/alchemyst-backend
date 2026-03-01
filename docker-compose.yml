@@ -1,8 +1,35 @@
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alchemyst_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-4000}
+      IDLE_SECONDS: ${IDLE_SECONDS:-15}
+      CHUNK_DELAY_MS: ${CHUNK_DELAY_MS:-35}
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_chat
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+    ports:
+      - "4000:4000"
+
   postgres:
     image: postgres:17
     container_name: ai_chat_postgres
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -11,12 +38,23 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_chat"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
     container_name: ai_chat_redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
 
 volumes:
   pg_data:

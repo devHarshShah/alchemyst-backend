@@ -66,3 +66,45 @@ export async function fetchSessionHistory(
 
   return rawMessages.map((item) => JSON.parse(item) as StoredMessage)
 }
+
+export async function listUserSessionIds(
+  fastify: FastifyInstance,
+  userId: string
+): Promise<string[]> {
+  const normalizedUserId = userId.trim()
+
+  if (!normalizedUserId) {
+    throw httpError(400, 'userId is required')
+  }
+
+  const pattern = chatHistoryKey(`${normalizedUserId}:*`)
+  let cursor = '0'
+  const keys: string[] = []
+
+  do {
+    const [nextCursor, batch] = await fastify.redis.scan(cursor, 'MATCH', pattern, 'COUNT', '100')
+    cursor = nextCursor
+    keys.push(...batch)
+  } while (cursor !== '0')
+
+  return keys
+    .map((key) => key.replace('chat:history:', ''))
+    .filter((sessionId) => sessionId.startsWith(`${normalizedUserId}:`))
+}
+
+export async function fetchLastMessage(
+  fastify: FastifyInstance,
+  sessionId: string
+): Promise<StoredMessage | null> {
+  const raw = await fastify.redis.lindex(chatHistoryKey(sessionId), -1)
+
+  if (!raw) {
+    return null
+  }
+
+  return JSON.parse(raw) as StoredMessage
+}
+
+export async function fetchMessageCount(fastify: FastifyInstance, sessionId: string): Promise<number> {
+  return fastify.redis.llen(chatHistoryKey(sessionId))
+}

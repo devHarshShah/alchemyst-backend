@@ -8,7 +8,10 @@ import { SERVER_EVENTS } from '../../ws/events'
 import {
   assertSessionOwnership,
   createSessionId,
+  fetchLastMessage,
+  fetchMessageCount,
   fetchSessionHistory,
+  listUserSessionIds,
   saveMessage,
 } from '../../ws/handlers/message.handler'
 import { sendEventToSession } from '../../ws/registry'
@@ -111,6 +114,51 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
       data: {
         sessionId,
         messages,
+      },
+    })
+  })
+
+  fastify.get('/sessions', async (request, reply) => {
+    const authUser = getAuthUser(request)
+    const sessionIds = await listUserSessionIds(fastify, authUser.userId)
+
+    const sessions = await Promise.all(
+      sessionIds.map(async (sessionId) => {
+        const [lastMessage, messageCount, sessionEnded] = await Promise.all([
+          fetchLastMessage(fastify, sessionId),
+          fetchMessageCount(fastify, sessionId),
+          idleService.isSessionEnded(sessionId),
+        ])
+
+        return {
+          sessionId,
+          sessionEnded,
+          messageCount,
+          updatedAt: lastMessage?.timestamp ?? null,
+          lastMessage: lastMessage
+            ? {
+                role: lastMessage.role,
+                content: lastMessage.content,
+                timestamp: lastMessage.timestamp,
+                interrupted: lastMessage.interrupted ?? false,
+              }
+            : null,
+        }
+      })
+    )
+
+    sessions.sort((a, b) => {
+      const left = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+      const right = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+      return right - left
+    })
+
+    return reply.status(200).send({
+      statusCode: 200,
+      message: 'Sessions fetched',
+      data: {
+        userId: authUser.userId,
+        sessions,
       },
     })
   })
