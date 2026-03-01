@@ -93,4 +93,5 @@ Optional:
 ## Notes
 
 - Container startup runs `prisma migrate deploy` before app launch.
+- App container also waits for DB TCP readiness before running Prisma migrate.
 - DB and Redis are included in compose for one-command deployment.
