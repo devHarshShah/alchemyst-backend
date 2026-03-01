@@ -9,12 +9,13 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 WORKDIR /app
 COPY . .
+RUN pnpm prisma generate
 RUN pnpm build:ts
 
 FROM base AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/prisma.config.ts ./prisma.config.ts
